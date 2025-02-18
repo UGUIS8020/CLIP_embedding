@@ -5,7 +5,7 @@ from datetime import datetime
 class TextProcessor:
     def __init__(self):
         self.text_dir = Path("text")
-        self.output_dir = Path("output")
+        self.output_dir = Path("data")
         self.backup_dir = Path("backup")
         
         self.setup_directories()
