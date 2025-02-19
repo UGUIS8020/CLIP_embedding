@@ -57,24 +57,27 @@ def main():
         
         # 統計情報の取得
         stats = index.describe_index_stats()
-        rprint(f"\n[bold green]📊 保存されているベクトル数: {stats['total_vector_count']}[/bold green]")
+        vector_count = stats['total_vector_count']
+        rprint(f"\n[bold green]📊 保存されているベクトル数: {vector_count}[/bold green]")
         
         # データの取得
         rprint("\n[bold]🔍 登録データを取得中...[/bold]")
-        query_result = index.query(
-            vector=[0.0] * 1536,
-            top_k=50,
+        
+        # クエリを使用して全てのベクトルを取得
+        query_response = index.query(
+            vector=[0] * 1536,  # CLIP ViT-L/14の埋め込みサイズに合わせて修正
+            top_k=vector_count,
             include_metadata=True
         )
         
-        if not query_result or "matches" not in query_result:
+        if not query_response or not query_response.matches:
             rprint("[red]⚠️ データが見つかりませんでした[/red]")
             return
         
         # データの表示
-        rprint(f"\n[bold green]✨ 登録データ一覧（最大50件）:[/bold green]")
-        for match in query_result["matches"]:
-            display_vector_info(match['id'], match.get('metadata', {}), console)
+        rprint(f"\n[bold green]✨ 登録データ一覧:[/bold green]")
+        for match in query_response.matches:
+            display_vector_info(match.id, match.metadata, console)
         
         rprint("\n[bold green]✅ データ確認完了[/bold green]")
         
