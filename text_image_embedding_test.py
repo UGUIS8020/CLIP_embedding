@@ -25,7 +25,7 @@ class Metadata:
     title: str = ""
     item: str = ""
     content: str = ""
-    summary: str = ""
+    content_summary: str = ""
     keywords: str = ""
     figure_contexts: Dict[str, str] = None
     grouped_figure_contexts: Dict[str, Dict] = None
@@ -574,8 +574,8 @@ def main():
         for file_path, metadata in text_processor.all_metadata.items():
             if metadata.content:
                 # 要約の生成
-                metadata.summary = summary_generator.generate_summary(metadata.content)
-                print(f"  {file_path}の本文要約を生成しました ({len(metadata.summary)}文字)")
+                metadata.content_summary = summary_generator.generate_summary(metadata.content)
+                print(f"  {file_path}の本文要約を生成しました ({len(metadata.content_summary)}文字)")
                 
                 # キーワードの生成を追加
                 metadata.keywords = summary_generator.generate_keywords(metadata.content)
@@ -597,22 +597,26 @@ def main():
                 content_emb = text_embedding_processor.get_embedding(metadata.content)
                 content_count += 1
                 
-                # メタデータの構造を修正
                 content_metadata = {
                     "category": "dental",
                     "data_type": "content",
                     "item": metadata.item,
-                    "text": metadata.content,
-                    "summary": metadata.summary,
-                    "keywords": metadata.keywords
+                    "content_summary": metadata.content_summary,
+                    "content_text": metadata.content,
+                    "keywords": metadata.keywords  # キーワードをメタデータに追加
                 }
                 
-                vectors_to_upsert.append({
-                    "id": content_id,
-                    "values": content_emb,
-                    "metadata": content_metadata
-                })
-                print(f"  メインコンテンツのembeddingを生成: {content_id}")
+                related_figs = [k for k, v in text_processor.all_entries.items() if k.startswith(base_name)]
+                if related_figs:
+                    content_metadata["related_figures"] = related_figs
+                
+                vectors_to_upsert.append((
+                    content_id,
+                    content_emb,
+                    content_metadata
+                ))
+                
+                print(f"  {content_id}の本文エンベディングを生成しました")
 
         # 図表のembedding計算
         print("\n図表のembedding計算を開始します...")
@@ -691,8 +695,8 @@ def build_metadata_text(metadata_info: Metadata, fig_base_id: str) -> str:
         metadata_text += f"title: {metadata_info.title}\n"
     if metadata_info.item:
         metadata_text += f"item: {metadata_info.item}\n"
-    if metadata_info.summary:
-        metadata_text += f"summary: {metadata_info.summary}\n"
+    if metadata_info.content_summary:
+        metadata_text += f"content_summary: {metadata_info.content_summary}\n"
     return metadata_text
 
 def build_metadata_fields(data: Entry, metadata_info: Metadata, fig_base_id: str) -> Dict:
@@ -701,13 +705,14 @@ def build_metadata_fields(data: Entry, metadata_info: Metadata, fig_base_id: str
         "category": "dental",
         "data_type": "text",
         "text": data.text,
-        "summary": metadata_info.summary,
         "entry_type": data.type,
         "related_image_id": data.image_id
     }
     
     if metadata_info.item:
         metadata_fields["item"] = metadata_info.item
+    if metadata_info.content_summary:
+        metadata_fields["content_summary"] = metadata_info.content_summary
     if metadata_info.keywords:  # キーワードを追加
         metadata_fields["keywords"] = metadata_info.keywords
     
@@ -722,15 +727,14 @@ def build_image_metadata_fields(data: Entry, metadata_info: Metadata, fig_base_i
         "category": "dental",
         "data_type": "image",
         "text": data.text,
-        "summary": metadata_info.summary,
         "entry_type": data.type,
         "related_text_id": data.text_id
     }
     
     if metadata_info.item:
         image_metadata_fields["item"] = metadata_info.item
-    if metadata_info.keywords:  # キーワードを追加
-        image_metadata_fields["keywords"] = metadata_info.keywords
+    if metadata_info.content_summary:
+        image_metadata_fields["content_summary"] = metadata_info.content_summary
     
     content_id = f"{data.text_id}_content"
     image_metadata_fields["related_content_id"] = content_id

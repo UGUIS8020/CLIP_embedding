@@ -15,7 +15,7 @@ def initialize_pinecone():
             raise ValueError("PINECONE_API_KEY が設定されていません")
         
         pc = Pinecone(api_key=pinecone_api_key)
-        return pc.Index("e-sports")
+        return pc.Index("raiden")
     except Exception as e:
         rprint(f"[red]Pinecone の初期化でエラーが発生しました: {e}[/red]")
         raise

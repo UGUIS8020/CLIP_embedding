@@ -25,8 +25,7 @@ class Metadata:
     title: str = ""
     item: str = ""
     content: str = ""
-    summary: str = ""
-    keywords: str = ""
+    content_summary: str = ""
     figure_contexts: Dict[str, str] = None
     grouped_figure_contexts: Dict[str, Dict] = None
 
@@ -274,8 +273,8 @@ class SummaryGenerator:
             response = self.client.chat.completions.create(
                 model="gpt-4",
                 messages=[
-                    {"role": "system", "content": "あなたは歯科医学の専門家です。与えられた歯科医学のテキストを、150文字程度に要約してください"},
-                    {"role": "user", "content": f"以下の歯科医学の文章を150字程度で要約してください。要約は完全な文章で終わるようにしてください：\n\n{content}"}
+                    {"role": "system", "content": "あなたは歯科医学の専門家です。与えられた歯科医学のテキストを、以下の点に注意して要約してください：\n1. 主題や分類、定義などの重要な情報を漏らさない\n2. 医学的な正確性を保つ\n3. 文章を途中で切らない\n4. 原文の構造や論理的な流れを維持する"},
+                    {"role": "user", "content": f"以下の歯科医学の文章を要約してください。要約は完全な文章で終わるようにしてください：\n\n{content}"}
                 ],
                 max_tokens=max_tokens,
                 temperature=0.3
@@ -295,7 +294,7 @@ class SummaryGenerator:
             print(f"要約生成エラー: {e}")
             return ""
 
-    def generate_keywords(self, content: str) -> str:
+    def generate_keywords(self, content: str, max_tokens: int = 100) -> str:
         """本文からキーワードを生成"""
         if not content or len(content.strip()) < 50:
             return ""
@@ -304,23 +303,120 @@ class SummaryGenerator:
             response = self.client.chat.completions.create(
                 model="gpt-4",
                 messages=[
-                     {"role": "system", "content": """歯科医学の専門家として、以下の文章から重要なキーワードを抽出してください。
-                            以下の点を特に重視してください：
-                            - 術式の具体的な内容（例：大臼歯2歯の同時移植）
-                            - 歯の本数、部位の情報
-                            - 治療手順や手技の専門用語
-                            - 重要な診断情報や治療結果
-                            キーワードはカンマ区切りで返してください。"""},
-                    {"role": "user", "content": content}
-                ]
+                    {"role": "system", "content": "あなたは歯科医学の専門家です。与えられた歯科医学のテキストから、重要なキーワードを抽出してください。以下の点に注意してください：\n1. 専門用語や重要な概念を優先\n2. 分類や手法に関する用語を含める\n3. カンマ区切りで出力\n4. 10個程度の重要なキーワードを選択"},
+                    {"role": "user", "content": f"以下の歯科医学の文章から、重要なキーワードを抽出してください：\n\n{content}"}
+                ],
+                max_tokens=max_tokens,
+                temperature=0.3
             )
-            keywords = response.choices[0].message.content.strip()
-            
-            return keywords
+            return response.choices[0].message.content.strip()
         except Exception as e:
             print(f"キーワード生成エラー: {e}")
             return ""
 
+def extract_reference_context(content, ref_id, context_window=200):
+    """
+    本文中から特定の参照（[Fig1]など）が言及されている周辺テキストを抽出
+    
+    Args:
+        content: 本文テキスト
+        ref_id: 検索する参照ID（'Fig1'など）
+        context_window: 参照前後の抽出する文字数
+    
+    Returns:
+        抽出されたコンテキストテキスト
+    """
+    if not content or not ref_id:
+        return ""
+    
+    try:
+        # 参照パターンの正規表現（[Fig1]形式のみ）
+        pattern = r'\[{}\]'.format(ref_id)
+        
+        # デバッグ用の出力を追加
+        print(f"検索パターン: {pattern}")
+        
+        # 参照の位置を検索
+        match = re.search(pattern, content)
+        if not match:
+            return ""
+        
+        # 参照の前後のテキストを抽出
+        start_pos = max(0, match.start() - context_window)
+        end_pos = min(len(content), match.end() + context_window)
+        
+        # 文の開始と終了位置を調整（できるだけ文単位で抽出）
+        while start_pos > 0 and content[start_pos] not in "。.":
+            start_pos -= 1
+        
+        while end_pos < len(content) - 1 and content[end_pos] not in "。.":
+            end_pos += 1
+        
+        # 次の参照の開始位置を探す
+        next_ref = re.search(r'\[(?:Fig|case)\d+[a-z]?\]', content[match.end():])
+        if next_ref:
+            end_pos = min(end_pos, match.end() + next_ref.start())
+        
+        context = content[start_pos:end_pos].strip()
+        if context:
+            print(f"マッチしたコンテキスト: {context}")  # デバッグ用
+            return context
+        
+        return ""
+    
+    except Exception as e:
+        print(f"参照コンテキスト抽出エラー: {e}")
+        return ""
+
+def group_figures_and_contexts(figure_contexts):
+    """
+    図の参照をグループ化し、関連するコンテキストをまとめる
+    
+    Args:
+        figure_contexts: {図ID: コンテキスト} の辞書
+    
+    Returns:
+        {ベース図ID: {コンテキスト, 含まれる図IDs}} の辞書
+    """
+    # グループ化された結果を格納する辞書
+    grouped_contexts = {}
+    
+    # 正規表現でFigやcaseの基本IDを抽出（例: Fig1a -> Fig1）
+    pattern = r'(Fig|case)(\d+)[a-z]?'
+    
+    for fig_id, context in figure_contexts.items():
+        match = re.match(pattern, fig_id)
+        if match:
+            prefix = match.group(1)  # "Fig" または "case"
+            base_num = match.group(2)  # 数字部分
+            base_id = f"{prefix}{base_num}"  # 基本ID (Fig1など)
+            
+            # グループがまだ存在しない場合は初期化
+            if base_id not in grouped_contexts:
+                grouped_contexts[base_id] = {
+                    "contexts": [],
+                    "included_ids": []
+                }
+            
+            # コンテキストとIDを追加
+            if context not in grouped_contexts[base_id]["contexts"]:
+                grouped_contexts[base_id]["contexts"].append(context)
+            
+            grouped_contexts[base_id]["included_ids"].append(fig_id)
+    
+    # 各グループのコンテキストを結合
+    for base_id, group_data in grouped_contexts.items():
+        # 重複を除去し、コンテキストを結合
+        unique_contexts = []
+        for ctx in group_data["contexts"]:
+            if not any(ctx in uc for uc in unique_contexts):
+                unique_contexts.append(ctx)
+        
+        group_data["combined_context"] = "\n".join(unique_contexts)
+        # 含まれる図IDをソート
+        group_data["included_ids"] = sorted(set(group_data["included_ids"]))
+    
+    return grouped_contexts
 
 def validate_environment():
     required_vars = {
@@ -569,17 +665,12 @@ def main():
             print("処理を中止します")
             return
 
-        # 要約とキーワードの生成
-        print("\n本文の要約とキーワードを生成中...")
+        # 要約の生成
+        print("\n本文の要約を生成中...")
         for file_path, metadata in text_processor.all_metadata.items():
             if metadata.content:
-                # 要約の生成
-                metadata.summary = summary_generator.generate_summary(metadata.content)
-                print(f"  {file_path}の本文要約を生成しました ({len(metadata.summary)}文字)")
-                
-                # キーワードの生成を追加
-                metadata.keywords = summary_generator.generate_keywords(metadata.content)
-                print(f"  {file_path}のキーワードを生成しました")
+                metadata.content_summary = summary_generator.generate_summary(metadata.content)
+                print(f"  {file_path}の本文要約を生成しました ({len(metadata.content_summary)}文字)")
 
         # embedding処理のための変数を初期化
         vectors_to_upsert = []
@@ -594,25 +685,33 @@ def main():
                 base_name = os.path.splitext(os.path.basename(file_path))[0]
                 content_id = f"{base_name}_content"
                 
+                # キーワードの生成を追加
+                keywords = summary_generator.generate_keywords(metadata.content)
+                print(f"  {content_id}のキーワードを生成しました")
+                
                 content_emb = text_embedding_processor.get_embedding(metadata.content)
                 content_count += 1
                 
-                # メタデータの構造を修正
                 content_metadata = {
                     "category": "dental",
                     "data_type": "content",
                     "item": metadata.item,
-                    "text": metadata.content,
-                    "summary": metadata.summary,
-                    "keywords": metadata.keywords
+                    "content_summary": metadata.content_summary,
+                    "content_text": metadata.content,
+                    "keywords": keywords  # キーワードをメタデータに追加
                 }
                 
-                vectors_to_upsert.append({
-                    "id": content_id,
-                    "values": content_emb,
-                    "metadata": content_metadata
-                })
-                print(f"  メインコンテンツのembeddingを生成: {content_id}")
+                related_figs = [k for k, v in text_processor.all_entries.items() if k.startswith(base_name)]
+                if related_figs:
+                    content_metadata["related_figures"] = related_figs
+                
+                vectors_to_upsert.append((
+                    content_id,
+                    content_emb,
+                    content_metadata
+                ))
+                
+                print(f"  {content_id}の本文エンベディングを生成しました")
 
         # 図表のembedding計算
         print("\n図表のembedding計算を開始します...")
@@ -691,8 +790,8 @@ def build_metadata_text(metadata_info: Metadata, fig_base_id: str) -> str:
         metadata_text += f"title: {metadata_info.title}\n"
     if metadata_info.item:
         metadata_text += f"item: {metadata_info.item}\n"
-    if metadata_info.summary:
-        metadata_text += f"summary: {metadata_info.summary}\n"
+    if metadata_info.content_summary:
+        metadata_text += f"content_summary: {metadata_info.content_summary}\n"
     return metadata_text
 
 def build_metadata_fields(data: Entry, metadata_info: Metadata, fig_base_id: str) -> Dict:
@@ -701,15 +800,14 @@ def build_metadata_fields(data: Entry, metadata_info: Metadata, fig_base_id: str
         "category": "dental",
         "data_type": "text",
         "text": data.text,
-        "summary": metadata_info.summary,
         "entry_type": data.type,
         "related_image_id": data.image_id
     }
     
     if metadata_info.item:
         metadata_fields["item"] = metadata_info.item
-    if metadata_info.keywords:  # キーワードを追加
-        metadata_fields["keywords"] = metadata_info.keywords
+    if metadata_info.content_summary:
+        metadata_fields["content_summary"] = metadata_info.content_summary
     
     content_id = f"{data.text_id}_content"
     metadata_fields["related_content_id"] = content_id
@@ -722,15 +820,14 @@ def build_image_metadata_fields(data: Entry, metadata_info: Metadata, fig_base_i
         "category": "dental",
         "data_type": "image",
         "text": data.text,
-        "summary": metadata_info.summary,
         "entry_type": data.type,
         "related_text_id": data.text_id
     }
     
     if metadata_info.item:
         image_metadata_fields["item"] = metadata_info.item
-    if metadata_info.keywords:  # キーワードを追加
-        image_metadata_fields["keywords"] = metadata_info.keywords
+    if metadata_info.content_summary:
+        image_metadata_fields["content_summary"] = metadata_info.content_summary
     
     content_id = f"{data.text_id}_content"
     image_metadata_fields["related_content_id"] = content_id
