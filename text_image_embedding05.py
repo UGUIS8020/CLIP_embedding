@@ -10,8 +10,8 @@ from PIL import Image
 from dotenv import load_dotenv
 from pinecone import Pinecone
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from dataclasses import dataclass
-from typing import Dict, List, Optional
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
 
 # 環境変数をロード
 load_dotenv()
@@ -20,13 +20,15 @@ load_dotenv()
 class Metadata:
     title: str = ""
     content: str = ""
+    figure_descriptions: Dict[str, str] = field(default_factory=dict)  # 図の説明文を保持
 
 class TextProcessor:
     def __init__(self):
         self.all_metadata: Dict[str, Metadata] = {}
+        self.figure_pattern = re.compile(r'\[(Fig\d+[a-z]?)\]')  # [Fig1]のようなパターンを検出
 
     def process_file(self, file_path: str) -> Metadata:
-        """テキストファイルを処理し、メタデータを抽出"""
+        """テキストファイルを処理し、メタデータと図の説明を抽出"""
         metadata = Metadata()
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -35,7 +37,14 @@ class TextProcessor:
             # ファイル名からメタデータを抽出
             filename = os.path.basename(file_path)
             metadata.title = filename.split('.')[0]
-            metadata.content = text.strip()
+            
+            # 本文と図の説明を分離
+            main_content, figure_content = self._split_content_and_figures(text)
+            metadata.content = main_content.strip()
+            
+            # 図の説明を処理
+            if figure_content:
+                self._process_figure_descriptions(figure_content, metadata)
             
             return metadata
 
@@ -43,6 +52,33 @@ class TextProcessor:
             print(f"テキスト抽出エラー: {e}")
             print(traceback.format_exc())
             return metadata
+
+    def _split_content_and_figures(self, text: str) -> Tuple[str, str]:
+        """本文と図の説明を分離"""
+        lines = text.split('\n')
+        for i, line in enumerate(lines):
+            if self.figure_pattern.match(line.strip()):
+                return '\n'.join(lines[:i]).strip(), '\n'.join(lines[i:])
+        return text.strip(), ""
+
+    def _process_figure_descriptions(self, figure_content: str, metadata: Metadata):
+        """図の説明文を処理"""
+        current_figure = None
+        current_text = []
+        
+        for line in figure_content.split('\n'):
+            fig_match = self.figure_pattern.match(line.strip())
+            if fig_match:
+                if current_figure:
+                    metadata.figure_descriptions[current_figure] = '\n'.join(current_text).strip()
+                
+                current_figure = fig_match.group(1)  # [Fig1] -> Fig1
+                current_text = []
+            elif line.strip() and current_figure:
+                current_text.append(line.strip())
+        
+        if current_figure and current_text:
+            metadata.figure_descriptions[current_figure] = '\n'.join(current_text).strip()
 
 class ImageProcessor:
     def __init__(self, model, preprocess, device):
@@ -157,7 +193,7 @@ def main():
             base_name = os.path.splitext(os.path.basename(file_path))[0]
             print(f"\n処理中のファイル: {file_path}")
             
-            # メインテキストの処理
+            # メインテキストと図の説明の処理
             metadata = text_processor.process_file(file_path)
             if metadata.content:
                 content_id = f"{base_name}_content"
@@ -172,6 +208,25 @@ def main():
                     }
                 })
                 print(f"メインテキストのembedding生成完了: {content_id}")
+            
+            # 図の説明文の処理
+            for fig_id, description in metadata.figure_descriptions.items():
+                if description:
+                    fig_desc_id = f"{base_name}_{fig_id}_desc"
+                    fig_desc_emb = text_embedding_processor.get_embedding(description)
+                    vectors_to_upsert.append({
+                        "id": fig_desc_id,
+                        "values": fig_desc_emb,
+                        "metadata": {
+                            "type": "figure_description",
+                            "title": metadata.title,
+                            "figure_id": fig_id,
+                            "text": description,
+                            "related_content_id": content_id,
+                            "related_image_id": f"{base_name}_{fig_id}_image"
+                        }
+                    })
+                    print(f"図の説明文のembedding生成完了: {fig_desc_id}")
             
             # 画像の処理
             image_files = glob.glob(os.path.join("data", "Fig*.jpg"))
@@ -195,7 +250,8 @@ def main():
                                 "type": "image",
                                 "title": metadata.title,
                                 "image_path": img_path,
-                                "related_content_id": content_id
+                                "related_content_id": content_id,
+                                "related_description_id": f"{base_name}_Fig{fig_num}_desc"
                             }
                         })
                         print(f"画像のembedding生成完了: {image_id}")
@@ -207,8 +263,10 @@ def main():
         print(f"処理したベクトル数: {len(vectors_to_upsert)}")
         print("内訳:")
         content_count = sum(1 for v in vectors_to_upsert if v["metadata"]["type"] == "content")
+        fig_desc_count = sum(1 for v in vectors_to_upsert if v["metadata"]["type"] == "figure_description")
         image_count = sum(1 for v in vectors_to_upsert if v["metadata"]["type"] == "image")
         print(f"- コンテンツ: {content_count}")
+        print(f"- 図の説明: {fig_desc_count}")
         print(f"- 画像: {image_count}")
 
         # Pineconeへのアップロード
