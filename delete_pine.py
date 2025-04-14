@@ -8,7 +8,7 @@ pinecone_api_key = os.getenv("PINECONE_API_KEY")
 
 # Pinecone 初期化
 pc = Pinecone(api_key=pinecone_api_key)
-index = pc.Index("raiden03")  # インデックスの参照
+index = pc.Index("raiden02")  # インデックスの参照
 
 def delete_all_pinecone_data():
     """Pinecone 内の全データを削除"""

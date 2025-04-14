@@ -22,12 +22,10 @@ PINECONE_INDEX ="raiden02"
 @dataclass
 class Metadata:
     title: str = ""
-    topic: str = ""
-    item:str = "" 
     content: str = ""
     figure_descriptions: Dict[str, str] = field(default_factory=dict)
-    case_descriptions: Dict[str, str] = field(default_factory=dict) 
-    
+    case_descriptions: Dict[str, str] = field(default_factory=dict)  # caseの説明を追加
+    topic: str = ""
 
 @dataclass
 class Entry:
@@ -58,35 +56,16 @@ class TextProcessor:
             
             metadata = Metadata()
             
-            # ファイル名からメタデータを抽出（デフォルト値）
+            # ファイル名からメタデータを抽出
             filename = os.path.basename(file_path)
             metadata.title = filename.split('.')[0]
             
-            # 行ごとに処理して厳密なタグマッチングを行う
-            for line in text.split('\n'):
-                line = line.strip()
-                
-                # 各タグを厳密にパターンマッチ
-                if line.startswith('title[') and line.endswith(']'):
-                    content = line[6:-1]  # 'title[' と ']' を除去
-                    metadata.title = content.strip()
-                    print(f"タイトル抽出（行単位）: {metadata.title}")
-                
-                elif line.startswith('topic[') and line.endswith(']'):
-                    content = line[6:-1]  # 'topic[' と ']' を除去
-                    metadata.topic = content.strip()
-                    print(f"トピック抽出（行単位）: {metadata.topic}")
-                
-                elif line.startswith('item[') and line.endswith(']'):
-                    content = line[5:-1]  # 'item[' と ']' を除去
-                    metadata.item = content.strip()
-                    print(f"アイテム抽出（行単位）: {metadata.item}")
-            
-            # 確認のためにメタデータを表示
-            print(f"\nメタデータ抽出結果:")
-            print(f"タイトル: {metadata.title}")
-            print(f"トピック: {metadata.topic}")
-            print(f"アイテム: {metadata.item}")
+            # その後、title[]から抽出
+            lines = text.split('\n')
+            for line in lines:
+                title_match = re.search(r'title\[(.*?)\]', line)
+                if title_match:
+                    metadata.title = title_match.group(1).strip()
             
             # 本文と図・ケースの説明を分離
             main_content, illustration_content = self._split_content_and_illustrations(text)
@@ -96,7 +75,12 @@ class TextProcessor:
             if illustration_content:
                 self._process_illustration_descriptions(illustration_content, metadata)
             
-            # Entryを作成
+            # topicの抽出
+            topic_match = re.search(r'topic\[(.*?)\]', text)
+            if topic_match:
+                metadata.topic = topic_match.group(1).strip()
+            
+            # Entryを作成する際にbase_nameを設定
             entry = Entry(
                 type="content",
                 number="",
@@ -108,9 +92,10 @@ class TextProcessor:
             )
             entries.append(entry)
             
-            # 図の説明文の処理（既存コード）
+            # 図の説明文の処理
             for fig_id, description in metadata.figure_descriptions.items():
                 if description:
+                    # 正確なIDを生成するために、元のIDをそのまま使用
                     entry = Entry(
                         type="figure_description",
                         number=fig_id,
@@ -123,15 +108,16 @@ class TextProcessor:
                     entries.append(entry)
                     print(f"図の説明エントリー追加: {fig_id} -> {entry.text_id}")
             
-            # ケースの説明文の処理（既存コード）
+            # ケースの説明文の処理
             for case_id, description in metadata.case_descriptions.items():
                 if description:
+                    # 正確なIDを生成するために、元のIDをそのまま使用
                     entry = Entry(
-                        type="case_description",
+                        type="case_description",  # ケース説明のタイプ
                         number=case_id,
                         text=description,
                         text_id=f"{base_name}_{case_id}_desc",
-                        image_id=f"{base_name}_{case_id}_image",
+                        image_id=f"{base_name}_{case_id}_image",  # 対応する画像IDが存在する場合
                         metadata=metadata,
                         base_name=base_name
                     )
@@ -140,8 +126,6 @@ class TextProcessor:
             
         except Exception as e:
             print(f"テキスト抽出エラー: {e}")
-            import traceback
-            traceback.print_exc()  # スタックトレースを表示
         
         return entries
 
@@ -314,20 +298,19 @@ def create_vectors(data: Entry, related_ids: Dict[str, List[str]] = None) -> Lis
             related_images.append(f"{data.base_name}_{case_id}_image")
         
         vectors.append({
-                "id": content_id,
-                "values": data.text_embedding,
-                "metadata": {
-                "category": CATEGORY,
+            "id": content_id,
+            "values": data.text_embedding,
+            "metadata": {
+                "type": data.type,
+                "category": CATEGORY,  # カテゴリーを追加
                 "title": data.metadata.title,
                 "topic": data.metadata.topic,
-                "item": data.metadata.item,
-                "type": data.type,                                 
                 "text": data.text,
                 "weight": type_weights["content"],
                 "vector_id": content_id,
                 "related_images": related_images,
                 "related_descriptions": related_descriptions,
-                "related_cases": related_cases 
+                "related_cases": related_cases  # ケースデータを追加
             }
         })
     elif data.type == "figure_description":
@@ -335,17 +318,15 @@ def create_vectors(data: Entry, related_ids: Dict[str, List[str]] = None) -> Lis
             "id": data.text_id,
             "values": data.text_embedding,
             "metadata": {
-                "category": CATEGORY,
-                "title": data.metadata.title,
-                "topic": data.metadata.topic,
-                "item": data.metadata.item,
-                "type": data.type,                
+                "type": data.type,
+                "category": CATEGORY,  # カテゴリーを追加
                 "text": data.text,
                 "weight": type_weights["figure_description"],
                 "vector_id": data.text_id,
                 "related_content_id": content_id,
-                "related_image_id": data.image_id
-               
+                "related_image_id": data.image_id,
+                "title": data.metadata.title,
+                "topic": data.metadata.topic
             }
         })
     elif data.type == "case_description":  # ケースデータの処理を追加
@@ -353,17 +334,15 @@ def create_vectors(data: Entry, related_ids: Dict[str, List[str]] = None) -> Lis
             "id": data.text_id,
             "values": data.text_embedding,
             "metadata": {
+                "type": data.type,
                 "category": CATEGORY,
-                "title": data.metadata.title,
-                "topic": data.metadata.topic,
-                "item": data.metadata.item,
-                "type": data.type,                                
                 "text": data.text,
                 "weight": type_weights["case_description"],
                 "vector_id": data.text_id,
                 "related_content_id": content_id,
-                "related_image_id": data.image_id, 
-               
+                "related_image_id": data.image_id,  # 対応画像がある場合
+                "title": data.metadata.title,
+                "topic": data.metadata.topic
             }
         })
     elif data.type == "image":
@@ -371,16 +350,14 @@ def create_vectors(data: Entry, related_ids: Dict[str, List[str]] = None) -> Lis
             "id": data.image_id,
             "values": data.image_embedding,
             "metadata": {
+                "type": data.type,
                 "category": CATEGORY,   # カテゴリーを追加
-                "title": data.metadata.title,
-                "topic": data.metadata.topic,
-                "item": data.metadata.item,
-                "type": data.type,                
                 "weight": type_weights["image"],  # 重みを追加
                 "vector_id": data.image_id,
                 "related_content_id": content_id,
                 "related_description_id": data.text_id,
-                
+                "title": data.metadata.title,
+                "topic": data.metadata.topic
             }
         })
     
