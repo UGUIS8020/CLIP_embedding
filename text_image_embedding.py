@@ -41,11 +41,11 @@ class Entry:
 
 class TextProcessor:
     def __init__(self):
-        # 正規表現パターンを修正してFigとcaseの両方に対応
-        self.figure_pattern = re.compile(r'\[(Fig\d+(?:[a-z]*))(?:\]|$)')
-        self.case_pattern = re.compile(r'\[(case\d+(?:[a-z]*))(?:\]|$)')
+        # 正規表現パターンを修正して Fig1b1 や FigA のようなパターンにも対応
+        self.figure_pattern = re.compile(r'\[(Fig(?:\d+)?(?:[A-Za-z]+\d*)*)(?:\]|$)')
+        self.case_pattern = re.compile(r'\[(case(?:\d+)?(?:[A-Za-z]+\d*)*)(?:\]|$)')
         # 複合パターン (Fig または case)
-        self.any_pattern = re.compile(r'\[((Fig|case)\d+(?:[a-z]*))(?:\]|$)')
+        self.any_pattern = re.compile(r'\[((Fig|case)(?:\d+)?(?:[A-Za-z]+\d*)*)(?:\]|$)')
 
     def process_file(self, file_path: str) -> List[Entry]:
         """テキストファイルを処理し、メタデータと図・ケースの説明を抽出"""
@@ -477,7 +477,7 @@ def main():
             for img_path in glob.glob(fig_pattern):
                 img_name = os.path.basename(img_path)
                 # 正規表現をより正確に - 完全な Fig1a などの形式にマッチ
-                match = re.match(r'(Fig\d+[a-z]*)\.jpg', img_name)
+                match = re.match(r'(Fig(?:\d+)?(?:[A-Za-z]+\d*)*)\.jpg', img_name)
                 if match:
                     fig_id = match.group(1)  # 完全なFig IDを取得 (例: Fig1a)
                     image_id = f"{entries[0].base_name}_{fig_id}_image"
