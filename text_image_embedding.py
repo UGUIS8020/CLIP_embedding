@@ -17,7 +17,7 @@ load_dotenv()
 
 # ファイルの先頭付近に定数を定義
 CATEGORY = "dental"
-PINECONE_INDEX ="raiden" 
+PINECONE_INDEX ="raiden02" 
 
 @dataclass
 class Metadata:
@@ -41,11 +41,10 @@ class Entry:
 
 class TextProcessor:
     def __init__(self):
-        # 正規表現パターンを修正して Fig1b1 や FigA のようなパターンにも対応
-        self.figure_pattern = re.compile(r'\[(Fig(?:\d+)?(?:[A-Za-z]+\d*)*)(?:\]|$)')
-        self.case_pattern = re.compile(r'\[(case(?:\d+)?(?:[A-Za-z]+\d*)*)(?:\]|$)')
-        # 複合パターン (Fig または case)
-        self.any_pattern = re.compile(r'\[((Fig|case)(?:\d+)?(?:[A-Za-z]+\d*)*)(?:\]|$)')
+        # 正規表現をより柔軟に修正
+        self.figure_pattern = re.compile(r'\[(Fig[\dA-Za-z]*)\]')
+        self.case_pattern = re.compile(r'\[(case[\dA-Za-z]*)\]')
+        self.any_pattern = re.compile(r'\[((Fig|case)[\dA-Za-z]*)\]')
 
     def process_file(self, file_path: str) -> List[Entry]:
         """テキストファイルを処理し、メタデータと図・ケースの説明を抽出"""
